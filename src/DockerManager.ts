@@ -7,6 +7,8 @@ import { logger } from './logger';
 
 export class DockerManager {
   containerId = '';
+  useLocalBinary = false;
+  localBinaryPath = '';
 
   constructor(
     public outputPath = '',
@@ -14,6 +16,16 @@ export class DockerManager {
   ) {}
 
   private async initContainerId(): Promise<void> {
+    // First check if local binary exists
+    const localBinary = path.join(__dirname, '..', 'schemavalidator');
+    if (fs.existsSync(localBinary)) {
+      this.useLocalBinary = true;
+      this.localBinaryPath = localBinary;
+      logger.info('Using local compiled validator binary');
+      return;
+    }
+
+    // Fall back to Docker
     this.containerId = await util
       .promisify(exec)('docker images validator:latest --format "{{.ID}}"')
       .then(result => result.stdout.trim())
@@ -30,18 +42,22 @@ export class DockerManager {
     outputPath = this.outputPath
   ): Promise<ContainerResult> {
     try {
-      if (this.containerId.length === 0) {
+      if (this.containerId.length === 0 && !this.useLocalBinary) {
         await this.initContainerId();
       }
-      if (this.containerId.length > 0) {
+      if (this.containerId.length > 0 || this.useLocalBinary) {
         // make temp dir for output
         temp.track();
         const outputDir = temp.mkdirSync('output');
         const containerOutputPath = path.join(outputDir, 'output.txt');
         const containerLocationPath = path.join(outputDir, 'locations.json');
         // copy output files after it finishes
-        const runCommand = this.buildRunCommand(schemaPath, dataPath, outputDir, schemaName);
-        logger.info('Running validator container...');
+        const runCommand = this.useLocalBinary
+          ? this.buildLocalCommand(schemaPath, dataPath, outputDir, schemaName)
+          : this.buildRunCommand(schemaPath, dataPath, outputDir, schemaName);
+        logger.info(
+          this.useLocalBinary ? 'Running local validator...' : 'Running validator container...'
+        );
         logger.debug(runCommand);
         return util
           .promisify(exec)(runCommand)
@@ -108,6 +124,19 @@ export class DockerManager {
     )}":/output/ ${
       this.containerId
     } "schema/${schemaFile}" "data/${dataFile}" -o "output/" -s ${schemaName}${failFastArg}`;
+  }
+
+  buildLocalCommand(
+    schemaPath: string,
+    dataPath: string,
+    outputDir: string,
+    schemaName: string
+  ): string {
+    const absoluteSchemaPath = path.resolve(schemaPath);
+    const absoluteDataPath = path.resolve(dataPath);
+    const absoluteOutputDir = path.resolve(outputDir);
+    const failFastArg = this.allErrors ? '' : ' -f';
+    return `"${this.localBinaryPath}" "${absoluteSchemaPath}" "${absoluteDataPath}" -o "${absoluteOutputDir}/" -s ${schemaName}${failFastArg}`;
   }
 }
 

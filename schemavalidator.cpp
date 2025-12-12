@@ -21,6 +21,7 @@
 
 using namespace rapidjson;
 using namespace std;
+namespace filesystem = std::filesystem;
 
 typedef GenericValue<UTF8<>, CrtAllocator> ValueType;
 
